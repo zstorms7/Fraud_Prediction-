@@ -1,0 +1,109 @@
+# ============================================================================
+# GRAPH VISUALIZATION - Network Structure
+# ============================================================================
+import networkx as nx
+
+print("\n" + "="*80)
+print("VISUALIZING GRAPH NETWORK STRUCTURE")
+print("="*80)
+
+fig, axes = plt.subplots(2, 2, figsize=(20, 20))
+
+# 1. Graph Network Visualization with Fraud/Non-Fraud coloring
+print("\n1. Creating network layout...")
+ax = axes[0, 0]
+
+# Use spring layout for better visualization
+pos = nx.spring_layout(G, k=0.5, iterations=50, seed=42)
+
+# Draw non-fraud nodes (blue)
+nx.draw_networkx_nodes(G, pos, nodelist=non_fraud_nodes, 
+                       node_color='lightblue', node_size=30, 
+                       alpha=0.6, ax=ax, label='Non-Fraud')
+
+# Draw fraud nodes (red)
+nx.draw_networkx_nodes(G, pos, nodelist=fraud_nodes, 
+                       node_color='red', node_size=50, 
+                       alpha=0.8, ax=ax, label='Fraud')
+
+# Draw edges
+nx.draw_networkx_edges(G, pos, alpha=0.1, width=0.5, ax=ax)
+
+ax.set_title('Transaction Network Graph\n(Fraud in Red, Non-Fraud in Blue)', fontsize=14, fontweight='bold')
+ax.legend(loc='upper right', fontsize=12)
+ax.axis('off')
+
+# 2. Degree Distribution
+print("2. Analyzing degree distribution...")
+ax = axes[0, 1]
+
+degree_sequence = sorted([d for n, d in G.degree()], reverse=True)
+ax.hist(degree_sequence, bins=30, color='steelblue', alpha=0.7, edgecolor='black')
+ax.set_xlabel('Node Degree', fontsize=12)
+ax.set_ylabel('Frequency', fontsize=12)
+ax.set_title('Degree Distribution\n(How Many Connections Each Transaction Has)', fontsize=14, fontweight='bold')
+ax.grid(True, alpha=0.3)
+
+# Add statistics text
+mean_degree = np.mean(degree_sequence)
+median_degree = np.median(degree_sequence)
+ax.axvline(mean_degree, color='red', linestyle='--', linewidth=2, label=f'Mean: {mean_degree:.1f}')
+ax.axvline(median_degree, color='orange', linestyle='--', linewidth=2, label=f'Median: {median_degree:.1f}')
+ax.legend()
+
+# 3. Fraud vs Non-Fraud Degree Comparison
+print("3. Comparing fraud and non-fraud connectivity...")
+ax = axes[1, 0]
+
+fraud_degrees = [G.degree(n) for n in fraud_nodes if G.has_node(n)]
+non_fraud_degrees = [G.degree(n) for n in non_fraud_nodes if G.has_node(n)]
+
+data_to_plot = [non_fraud_degrees, fraud_degrees]
+bp = ax.boxplot(data_to_plot, labels=['Non-Fraud', 'Fraud'], patch_artist=True)
+bp['boxes'][0].set_facecolor('lightblue')
+bp['boxes'][1].set_facecolor('lightcoral')
+
+ax.set_ylabel('Node Degree (Number of Connections)', fontsize=12)
+ax.set_title('Connectivity: Fraud vs Non-Fraud Transactions', fontsize=14, fontweight='bold')
+ax.grid(True, alpha=0.3, axis='y')
+
+# Add statistics
+ax.text(0.02, 0.98, 
+        f"Non-Fraud Avg Degree: {np.mean(non_fraud_degrees):.2f}\n"
+        f"Fraud Avg Degree: {np.mean(fraud_degrees):.2f}",
+        transform=ax.transAxes, fontsize=11, verticalalignment='top',
+        bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+
+# 4. Fraud Cluster Analysis
+print("4. Analyzing fraud clustering...")
+ax = axes[1, 1]
+
+# Calculate clustering coefficient for fraud vs non-fraud
+try:
+    fraud_clustering = [nx.clustering(G, n) for n in fraud_nodes if G.has_node(n)]
+    non_fraud_clustering = [nx.clustering(G, n) for n in non_fraud_nodes if G.has_node(n)]
+    
+    ax.hist(non_fraud_clustering, bins=20, alpha=0.6, label='Non-Fraud', color='blue', edgecolor='black')
+    ax.hist(fraud_clustering, bins=20, alpha=0.6, label='Fraud', color='red', edgecolor='black')
+    ax.set_xlabel('Clustering Coefficient', fontsize=12)
+    ax.set_ylabel('Frequency', fontsize=12)
+    ax.set_title('Clustering Coefficient Distribution\n(How Much Neighbors Connect to Each Other)', fontsize=14, fontweight='bold')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    # Add statistics
+    ax.text(0.02, 0.98, 
+            f"Non-Fraud Avg: {np.mean(non_fraud_clustering):.3f}\n"
+            f"Fraud Avg: {np.mean(fraud_clustering):.3f}",
+            transform=ax.transAxes, fontsize=11, verticalalignment='top',
+            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+except:
+    ax.text(0.5, 0.5, 'Clustering analysis not available', 
+            ha='center', va='center', fontsize=12)
+    ax.set_title('Clustering Coefficient Distribution', fontsize=14, fontweight='bold')
+
+plt.tight_layout()
+plt.savefig('graph_network_analysis.png', dpi=300, bbox_inches='tight')
+plt.show()
+
+print("\nVisualization saved as 'graph_network_analysis.png'")

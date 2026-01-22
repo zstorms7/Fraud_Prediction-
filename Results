@@ -1,0 +1,101 @@
+================================================================================
+GNN FRAUD DETECTION PIPELINE
+================================================================================
+
+STEP 1: PREPARE DATA
+--------------------------------------------------------------------------------
+Categorical columns: 31
+Feature matrix: (590540, 432)
+Fraud cases: 20663 (3.50%)
+
+STEP 2: BUILD GRAPH
+--------------------------------------------------------------------------------
+Building graph: 50000 nodes, 15 neighbors each
+Graph built: 750000 edges
+
+STEP 3: TRAIN-TEST SPLIT
+--------------------------------------------------------------------------------
+Train: 40000 samples (1353 fraud)
+Test: 10000 samples (338 fraud)
+
+STEP 4: DEFINE GNN MODEL
+--------------------------------------------------------------------------------
+Using device: cpu
+Model parameters: 662,082
+Class weights: [ 1.       27.579586]
+
+STEP 5: TRAIN MODEL
+--------------------------------------------------------------------------------
+Epoch    Train Loss   Train F1     Test F1     
+--------------------------------------------------
+5        0.621929     0.1180       0.1150      
+10       0.569160     0.1350       0.1306      
+15       0.533909     0.1572       0.1473      
+20       0.523342     0.1863       0.1786      
+25       0.510451     0.2193       0.2035      
+30       0.496824     0.2136       0.1976      
+35       0.487705     0.2484       0.2260      
+40       0.480255     0.2387       0.2185      
+45       0.472092     0.2707       0.2368      
+50       0.464313     0.2517       0.2250      
+55       0.460734     0.2427       0.2133      
+
+Early stopping at epoch 59
+
+Best F1 Score: 0.2424
+
+STEP 6: EVALUATION
+--------------------------------------------------------------------------------
+
+CLASSIFICATION REPORT:
+              precision    recall  f1-score   support
+
+   Non-Fraud       0.99      0.86      0.92      9662
+       Fraud       0.14      0.66      0.24       338
+
+    accuracy                           0.85     10000
+   macro avg       0.56      0.76      0.58     10000
+weighted avg       0.96      0.85      0.90     10000
+
+
+CONFUSION MATRIX:
+                Predicted
+              Non-Fraud  Fraud
+Actual Non-Fraud    8327    1335
+       Fraud         115     223
+
+KEY METRICS:
+Accuracy:  0.8550
+Precision: 0.1431
+Recall:    0.6598
+F1 Score:  0.2352
+ROC-AUC:   0.8337
+
+BUSINESS IMPACT:
+Total fraud: 338
+Frauds detected: 223 (66.0%)
+Frauds missed: 115
+False alarms: 1335
+
+STEP 7: PREDICTION FUNCTION
+--------------------------------------------------------------------------------
+
+Example predictions (first 10 test transactions):
+Index    True         Predicted    Probability  Status    
+------------------------------------------------------------
+106798   Non-Fraud    Non-Fraud    0.3791       ✓         
+323170   Non-Fraud    Non-Fraud    0.3785       ✓         
+108547   Non-Fraud    Non-Fraud    0.2891       ✓         
+69977    Non-Fraud    Non-Fraud    0.2470       ✓         
+543237   Non-Fraud    Non-Fraud    0.0858       ✓         
+131530   Non-Fraud    Non-Fraud    0.0968       ✓         
+364523   Non-Fraud    Non-Fraud    0.2420       ✓         
+292443   Non-Fraud    Non-Fraud    0.3216       ✓         
+285699   Non-Fraud    Non-Fraud    0.4637       ✓         
+142657   Non-Fraud    Non-Fraud    0.1414       ✓         
+
+================================================================================
+PIPELINE COMPLETE!
+================================================================================
+
+Use predict_fraud_gnn(new_transactions_df) to predict on new data

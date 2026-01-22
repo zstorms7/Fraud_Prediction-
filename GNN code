@@ -1,0 +1,318 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch_geometric.nn import GATConv
+from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import (classification_report, confusion_matrix, roc_auc_score, 
+                             f1_score, accuracy_score, precision_score, recall_score,
+                             roc_curve, precision_recall_curve)
+from sklearn.neighbors import NearestNeighbors
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+print("="*80)
+print("GNN FRAUD DETECTION PIPELINE")
+print("="*80)
+
+# Step 1: Prepare Data
+print("\nSTEP 1: PREPARE DATA")
+print("-"*80)
+
+df_for_gnn = merged_df_imputed.copy()
+
+# Encode categorical variables (handle Unknown)
+categorical_cols = df_for_gnn.select_dtypes(include=['object']).columns.tolist()
+print(f"Categorical columns: {len(categorical_cols)}")
+
+label_encoders = {}
+for col in categorical_cols:
+    le = LabelEncoder()
+    df_for_gnn[col] = df_for_gnn[col].fillna('Unknown').astype(str)
+    df_for_gnn[col] = le.fit_transform(df_for_gnn[col])
+    label_encoders[col] = le
+
+# Separate features and target
+X_all = df_for_gnn.drop(['isFraud', 'TransactionID'], axis=1)
+y_all = df_for_gnn['isFraud'].values
+
+# Standardize features
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X_all)
+
+print(f"Feature matrix: {X_scaled.shape}")
+print(f"Fraud cases: {y_all.sum()} ({y_all.mean()*100:.2f}%)")
+
+# Step 2: Build Graph
+print("\nSTEP 2: BUILD GRAPH")
+print("-"*80)
+
+def build_fraud_graph(X, k_neighbors=15, sample_size=50000):
+    n_samples = min(sample_size, len(X))
+    sample_idx = np.random.choice(len(X), n_samples, replace=False)
+    X_sample = X[sample_idx]
+    
+    print(f"Building graph: {n_samples} nodes, {k_neighbors} neighbors each")
+    
+    nbrs = NearestNeighbors(n_neighbors=k_neighbors+1, algorithm='auto', n_jobs=-1)
+    nbrs.fit(X_sample)
+    distances, indices = nbrs.kneighbors(X_sample)
+    
+    edge_list = []
+    for i in range(len(indices)):
+        for j, neighbor_idx in enumerate(indices[i][1:]):
+            edge_list.append([sample_idx[i], sample_idx[neighbor_idx]])
+    
+    edge_index = torch.LongTensor(edge_list).t().contiguous()
+    print(f"Graph built: {edge_index.shape[1]} edges")
+    
+    return edge_index, sample_idx
+
+edge_index, sample_idx = build_fraud_graph(X_scaled)
+
+# Step 3: Train-Test Split
+print("\nSTEP 3: TRAIN-TEST SPLIT")
+print("-"*80)
+
+train_idx, test_idx = train_test_split(sample_idx, test_size=0.2, random_state=42, 
+                                        stratify=y_all[sample_idx])
+
+train_mask = torch.zeros(len(X_scaled), dtype=torch.bool)
+test_mask = torch.zeros(len(X_scaled), dtype=torch.bool)
+train_mask[train_idx] = True
+test_mask[test_idx] = True
+
+X_tensor = torch.FloatTensor(X_scaled)
+y_tensor = torch.LongTensor(y_all)
+
+print(f"Train: {train_mask.sum().item()} samples ({y_all[train_idx].sum()} fraud)")
+print(f"Test: {test_mask.sum().item()} samples ({y_all[test_idx].sum()} fraud)")
+
+# Step 4: Define GNN Model
+print("\nSTEP 4: DEFINE GNN MODEL")
+print("-"*80)
+
+class FraudDetectionGNN(nn.Module):
+    def __init__(self, in_channels, hidden_channels, num_classes=2):
+        super(FraudDetectionGNN, self).__init__()
+        
+        self.conv1 = GATConv(in_channels, hidden_channels, heads=4, concat=True, dropout=0.3)
+        self.conv2 = GATConv(hidden_channels*4, hidden_channels, heads=4, concat=True, dropout=0.3)
+        self.conv3 = GATConv(hidden_channels*4, hidden_channels, heads=2, concat=True, dropout=0.3)
+        
+        self.bn1 = nn.BatchNorm1d(hidden_channels * 4)
+        self.bn2 = nn.BatchNorm1d(hidden_channels * 4)
+        self.bn3 = nn.BatchNorm1d(hidden_channels * 2)
+        
+        self.fc1 = nn.Linear(hidden_channels * 2, hidden_channels)
+        self.fc2 = nn.Linear(hidden_channels, hidden_channels // 2)
+        self.fc3 = nn.Linear(hidden_channels // 2, num_classes)
+        
+        self.dropout = nn.Dropout(0.4)
+        
+    def forward(self, x, edge_index):
+        x = self.conv1(x, edge_index)
+        x = self.bn1(x)
+        x = F.elu(x)
+        x = self.dropout(x)
+        
+        x = self.conv2(x, edge_index)
+        x = self.bn2(x)
+        x = F.elu(x)
+        x = self.dropout(x)
+        
+        x = self.conv3(x, edge_index)
+        x = self.bn3(x)
+        x = F.elu(x)
+        x = self.dropout(x)
+        
+        x = self.fc1(x)
+        x = F.relu(x)
+        x = self.dropout(x)
+        
+        x = self.fc2(x)
+        x = F.relu(x)
+        x = self.dropout(x)
+        
+        x = self.fc3(x)
+        return x
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"Using device: {device}")
+
+model = FraudDetectionGNN(in_channels=X_scaled.shape[1], hidden_channels=128, num_classes=2).to(device)
+
+# Class weights for imbalanced data
+class_counts = np.bincount(y_all)
+class_weights = torch.FloatTensor([1.0, class_counts[0]/class_counts[1]]).to(device)
+criterion = nn.CrossEntropyLoss(weight=class_weights)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=5e-4)
+
+print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+print(f"Class weights: {class_weights.cpu().numpy()}")
+
+# Step 5: Train Model
+print("\nSTEP 5: TRAIN MODEL")
+print("-"*80)
+
+def train_gnn(model, x, y, edge_index, train_mask, test_mask, epochs=100):
+    x = x.to(device)
+    y = y.to(device)
+    edge_index = edge_index.to(device)
+    train_mask = train_mask.to(device)
+    test_mask = test_mask.to(device)
+    
+    best_f1 = 0
+    patience_counter = 0
+    
+    print(f"{'Epoch':<8} {'Train Loss':<12} {'Train F1':<12} {'Test F1':<12}")
+    print("-" * 50)
+    
+    for epoch in range(epochs):
+        model.train()
+        optimizer.zero_grad()
+        
+        out = model(x, edge_index)
+        loss = criterion(out[train_mask], y[train_mask])
+        loss.backward()
+        optimizer.step()
+        
+        model.eval()
+        with torch.no_grad():
+            out = model(x, edge_index)
+            pred = out.argmax(dim=1)
+            
+            train_pred = pred[train_mask].cpu().numpy()
+            train_true = y[train_mask].cpu().numpy()
+            train_f1 = f1_score(train_true, train_pred)
+            
+            test_pred = pred[test_mask].cpu().numpy()
+            test_true = y[test_mask].cpu().numpy()
+            test_f1 = f1_score(test_true, test_pred)
+            
+            if (epoch + 1) % 5 == 0:
+                print(f"{epoch+1:<8} {loss.item():<12.6f} {train_f1:<12.4f} {test_f1:<12.4f}")
+            
+            if test_f1 > best_f1:
+                best_f1 = test_f1
+                patience_counter = 0
+                best_model_state = model.state_dict().copy()
+            else:
+                patience_counter += 1
+            
+            if patience_counter >= 15:
+                print(f"\nEarly stopping at epoch {epoch+1}")
+                break
+    
+    model.load_state_dict(best_model_state)
+    print(f"\nBest F1 Score: {best_f1:.4f}")
+    return model
+
+trained_model = train_gnn(model, X_tensor, y_tensor, edge_index, train_mask, test_mask, epochs=100)
+
+# Step 6: Evaluate
+print("\nSTEP 6: EVALUATION")
+print("-"*80)
+
+trained_model.eval()
+with torch.no_grad():
+    out = trained_model(X_tensor.to(device), edge_index.to(device))
+    pred_proba = F.softmax(out, dim=1)[:, 1].cpu().numpy()
+    pred_class = out.argmax(dim=1).cpu().numpy()
+    
+    test_pred = pred_class[test_mask]
+    test_true = y_tensor[test_mask].numpy()
+    test_proba = pred_proba[test_mask]
+
+print("\nCLASSIFICATION REPORT:")
+print(classification_report(test_true, test_pred, target_names=['Non-Fraud', 'Fraud']))
+
+cm = confusion_matrix(test_true, test_pred)
+print("\nCONFUSION MATRIX:")
+print(f"                Predicted")
+print(f"              Non-Fraud  Fraud")
+print(f"Actual Non-Fraud  {cm[0,0]:6d}  {cm[0,1]:6d}")
+print(f"       Fraud      {cm[1,0]:6d}  {cm[1,1]:6d}")
+
+accuracy = accuracy_score(test_true, test_pred)
+precision = precision_score(test_true, test_pred)
+recall = recall_score(test_true, test_pred)
+f1 = f1_score(test_true, test_pred)
+roc_auc = roc_auc_score(test_true, test_proba)
+
+print(f"\nKEY METRICS:")
+print(f"Accuracy:  {accuracy:.4f}")
+print(f"Precision: {precision:.4f}")
+print(f"Recall:    {recall:.4f}")
+print(f"F1 Score:  {f1:.4f}")
+print(f"ROC-AUC:   {roc_auc:.4f}")
+
+total_fraud = test_true.sum()
+caught_fraud = (test_pred[test_true == 1] == 1).sum()
+false_alarms = (test_pred[test_true == 0] == 1).sum()
+
+print(f"\nBUSINESS IMPACT:")
+print(f"Total fraud: {total_fraud}")
+print(f"Frauds detected: {caught_fraud} ({caught_fraud/total_fraud*100:.1f}%)")
+print(f"Frauds missed: {total_fraud - caught_fraud}")
+print(f"False alarms: {false_alarms}")
+
+# Step 7: Prediction Function
+print("\nSTEP 7: PREDICTION FUNCTION")
+print("-"*80)
+
+def predict_fraud_gnn(new_transactions):
+    """
+    Predict fraud for new transactions
+    
+    Parameters:
+    -----------
+    new_transactions : DataFrame (without isFraud and TransactionID columns)
+    
+    Returns:
+    --------
+    predictions : array (0 = Non-Fraud, 1 = Fraud)
+    probabilities : array (fraud probability 0-1)
+    """
+    trained_model.eval()
+    
+    X_new = new_transactions.copy()
+    
+    # Encode categorical variables
+    for col, le in label_encoders.items():
+        if col in X_new.columns:
+            X_new[col] = X_new[col].fillna('Unknown').astype(str)
+            X_new[col] = X_new[col].apply(
+                lambda x: le.transform([x])[0] if x in le.classes_ else le.transform(['Unknown'])[0]
+            )
+    
+    # Scale features
+    X_new_scaled = scaler.transform(X_new)
+    X_new_tensor = torch.FloatTensor(X_new_scaled).to(device)
+    
+    # Predict
+    with torch.no_grad():
+        out = trained_model(X_new_tensor, edge_index.to(device))
+        probs = F.softmax(out, dim=1)[:, 1].cpu().numpy()
+        preds = out.argmax(dim=1).cpu().numpy()
+    
+    return preds, probs
+
+print("\nExample predictions (first 10 test transactions):")
+print(f"{'Index':<8} {'True':<12} {'Predicted':<12} {'Probability':<12} {'Status':<10}")
+print("-" * 60)
+
+for i in range(min(10, len(test_idx))):
+    idx = test_idx[i]
+    true_label = "FRAUD" if y_all[idx] == 1 else "Non-Fraud"
+    pred_label = "FRAUD" if pred_class[idx] == 1 else "Non-Fraud"
+    prob = pred_proba[idx]
+    status = "✓" if y_all[idx] == pred_class[idx] else "✗"
+    
+    print(f"{idx:<8} {true_label:<12} {pred_label:<12} {prob:<12.4f} {status:<10}")
+
+print("\n" + "="*80)
+print("PIPELINE COMPLETE!")
+print("="*80)
+print("\nUse predict_fraud_gnn(new_transactions_df) to predict on new data")
